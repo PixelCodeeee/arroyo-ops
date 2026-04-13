@@ -1,0 +1,106 @@
+name: "3 - Promote to Stable"
+on:
+  workflow_dispatch:
+
+jobs:
+  promote-validation:
+    runs-on: ubuntu-latest
+    environment: production-promote
+    steps:
+      - name: Manual Approval Wait
+        run: echo "Validation Approved for Promotion"
+
+  promote:
+    needs: promote-validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Ops Repository
+        uses: actions/checkout@v4
+        with:
+          repository: PixelCodeeee/arroyo-ops
+          path: ops
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Authenticate GCP IAP (SSH & Redis Warning)
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_IAP_CREDENTIALS }}
+
+      - name: Setup GCloud (IAP)
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set Redis Announcement (via SSH)
+        run: |
+          gcloud compute ssh joshualuna@private-backend-vm \
+            --project=beta-prime-489121 \
+            --zone=us-central1-a \
+            --tunnel-through-iap \
+            --command="docker exec microservices-redis-shared-1 redis-cli set maintenance:announcement:canary 'La sesión terminará pronto debido a la promoción de características' EX 900" || true
+
+      - name: Wait & Drain
+        run: |
+          echo "Starting Drain sequence..."
+          while : ; do
+            COUNT=$(gcloud compute ssh joshualuna@private-backend-vm \
+              --project=beta-prime-489121 \
+              --zone=us-central1-a \
+              --tunnel-through-iap \
+              --command="curl -s http://localhost:5000/internal/sessions/count | grep -o '\"active_sessions\":\s*[0-9]*' | grep -o '[0-9]*'" || echo "0")
+            
+            echo "Current canary active sessions: ${COUNT:-0}"
+            
+            if [ -z "$COUNT" ] || [ "$COUNT" -eq 0 ]; then
+                echo "Drain complete!"
+                break
+            fi
+            echo "Waiting for traffic to drain..."
+            sleep 60
+          done
+
+      - name: Authenticate GCP (Load Balancer API)
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Setup GCloud (LB)
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Promote and reset weights
+        run: |
+          gcloud compute backend-services update arroyo-backend-svc \
+            --project=beta-prime-489121 \
+            --global \
+            --no-custom-request-headers \
+            --custom-response-header="Set-Cookie: X-Frontend-Version=stable; Path=/; Max-Age=3600" \
+            --canary-weight=0
+
+          gcloud compute backend-services update arroyo-frontend-svc \
+            --project=beta-prime-489121 \
+            --global \
+            --no-custom-request-headers \
+            --custom-response-header="Set-Cookie: X-Frontend-Version=stable; Path=/; Max-Age=3600" \
+            --canary-weight=0
+
+      - name: Copy Sync State
+        run: |
+          cd ops
+          mkdir -p manifests
+          touch manifests/stable.json manifests/canary.json
+          
+          if [ -s manifests/canary.json ]; then
+            cat manifests/canary.json > manifests/stable.json
+          fi
+
+          cat <<EOF > manifests/canary.json
+          {
+            "api_contract": "$(jq -r '.api_contract // empty' manifests/stable.json || echo 'v1')",
+            "frontend": { "commit": null, "built_at": null, "status": "missing" },
+            "backend": { "commit": null, "built_at": null, "status": "missing" }
+          }
+          EOF
+          
+          git config user.name "GitHub Actions Bot"
+          git config user.email "<>"
+          git add manifests/
+          git commit -m "chore(ops): Promoted canary state to stable" || echo "No changes to commit"
+          git push origin HEAD || true

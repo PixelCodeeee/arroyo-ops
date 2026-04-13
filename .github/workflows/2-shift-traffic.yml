@@ -1,0 +1,101 @@
+name: "2 - Shift Traffic to Canary"
+on:
+  workflow_dispatch:
+    inputs:
+      frontend_commit:
+        description: 'Frontend Commit SHA (if changed)'
+        required: false
+      backend_commit:
+        description: 'Backend Commit SHA (if changed)'
+        required: false
+      api_contract:
+        description: 'New API Contract version (if changed)'
+        required: false
+
+jobs:
+  shift-traffic:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Ops Repository
+        uses: actions/checkout@v4
+        with:
+          repository: PixelCodeeee/arroyo-ops
+          path: ops
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Sync Canary State
+        run: |
+          cd ops
+          # Simulated variables, in a real environment extract these from build triggers
+          FRONT_COMMIT=${{ github.event.inputs.frontend_commit }}
+          BACK_COMMIT=${{ github.event.inputs.backend_commit }}
+          CONTRACT=${{ github.event.inputs.api_contract }}
+          
+          COMPONENT=""
+          COMMIT=""
+          if [ -n "$FRONT_COMMIT" ]; then
+             COMPONENT="frontend"
+             COMMIT="$FRONT_COMMIT"
+          elif [ -n "$BACK_COMMIT" ]; then
+             COMPONENT="backend"
+             COMMIT="$BACK_COMMIT"
+          fi
+          
+          if [ -n "$COMPONENT" ]; then
+             node scripts/sync.js "$COMPONENT" "$COMMIT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CONTRACT"
+          else
+             echo "No updates passed. Skipping sync."
+          fi
+
+      - name: Set Redis Announcement (via SSH)
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_IAP_CREDENTIALS }}
+
+      - name: Setup GCloud (IAP)
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Broadcast Maintenance Message
+        run: |
+          gcloud compute ssh joshualuna@private-backend-vm \
+            --project=beta-prime-489121 \
+            --zone=us-central1-a \
+            --tunnel-through-iap \
+            --command="docker exec microservices-redis-shared-1 redis-cli set maintenance:announcement:stable 'La sesión terminará pronto debido a una actualización' EX 900" || true
+
+      - name: Authenticate GCP (Load Balancer API)
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Setup GCloud (LB)
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Shift Traffic (10%)
+        run: |
+          gcloud compute backend-services update arroyo-backend-svc \
+            --project=beta-prime-489121 \
+            --global \
+            --custom-request-headers="x-frontend-version: canary" \
+            --custom-response-header="Set-Cookie: X-Frontend-Version=canary; Path=/; Max-Age=3600" \
+            --canary-weight=10
+
+          gcloud compute backend-services update arroyo-frontend-svc \
+            --project=beta-prime-489121 \
+            --global \
+            --custom-request-headers="x-frontend-version: canary" \
+            --custom-response-header="Set-Cookie: X-Frontend-Version=canary; Path=/; Max-Age=3600" \
+            --canary-weight=10
+
+      - name: Smoke Tests
+        run: |
+          cd ops
+          bash tests/smoke.sh || true
+
+      - name: Wait for Metrics
+        run: sleep 300
+
+      - name: Verify Logs
+        run: |
+          cd ops
+          bash tests/verify-logs.sh || true

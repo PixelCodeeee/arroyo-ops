@@ -5,7 +5,12 @@ echo "Running Smoke Tests on Canary Deployment..."
 
 # You must replace this with your actual GCLB external IP or domain when configuring pipelines.
 # For example, https://api.arroyoseco.online
-TARGET_URL=${1:-"http://localhost:5100"} 
+if [ -z "$1" ]; then
+  LB_IP=$(gcloud compute addresses describe arroyo-global-ip --format="get(address)" --global --project=beta-prime-489121 2>/dev/null || echo "127.0.0.1")
+  TARGET_URL="http://$LB_IP"
+else
+  TARGET_URL=$1
+fi
 
 # Example: Hitting an openly accessible endpoint checking health or catalog.
 # The GCLB uses a cookie or header to split. If using a header: x-frontend-version: canary

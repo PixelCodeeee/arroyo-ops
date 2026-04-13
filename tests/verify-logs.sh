@@ -6,8 +6,8 @@ echo "Verifying GCP Logs for Canary 5xx errors..."
 # Wait 5 minutes before checking (can be handled via GitHub Actions sleep step, but included here for safety if run standalone)
 # sleep 300
 
-PROJECT_ID=${1:-"arroyo-seco-project"} # Replace with your real GCP Project ID
-BACKEND_SERVICE_NAME="arroyo-backend-service"
+PROJECT_ID=${1:-"beta-prime-489121"} # Replace with your real GCP Project ID
+BACKEND_SERVICE_NAME="arroyo-backend-svc"
 
 # We look back 5 minutes
 TIMESTAMP=$(date -u -d '5 minutes ago' '+%Y-%m-%dT%H:%M:%SZ')
