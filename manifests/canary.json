@@ -1,0 +1,13 @@
+{
+  "api_contract": "v1",
+  "frontend": {
+    "commit": null,
+    "built_at": null,
+    "status": "missing"
+  },
+  "backend": {
+    "commit": null,
+    "built_at": null,
+    "status": "missing"
+  }
+}

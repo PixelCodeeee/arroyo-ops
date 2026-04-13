@@ -1,0 +1,13 @@
+{
+  "api_contract": "v1",
+  "frontend": {
+    "commit": "initial",
+    "built_at": "2026-04-13T00:00:00Z",
+    "status": "ready"
+  },
+  "backend": {
+    "commit": "initial",
+    "built_at": "2026-04-13T00:00:00Z",
+    "status": "ready"
+  }
+}
