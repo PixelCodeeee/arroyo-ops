@@ -3,15 +3,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  promote-validation:
-    runs-on: ubuntu-latest
-    environment: production-promote
-    steps:
-      - name: Manual Approval Wait
-        run: echo "Validation Approved for Promotion"
-
   promote:
-    needs: promote-validation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Ops Repository
@@ -35,17 +27,18 @@ jobs:
             --project=beta-prime-489121 \
             --zone=us-central1-a \
             --tunnel-through-iap \
-            --command="docker exec microservices-redis-shared-1 redis-cli set maintenance:announcement:canary 'La sesión terminará pronto debido a la promoción de características' EX 900" || true
+            --command="sudo docker exec microservices-redis-shared-1 redis-cli set maintenance:announcement:canary 'La sesión terminará pronto debido a la promoción de características' EX 900" || true
 
-      - name: Wait & Drain
+      - name: Wait & Drain Canary Sessions
         run: |
-          echo "Starting Drain sequence..."
+          echo "Starting Drain sequence on Canary port 5100..."
           while : ; do
+            # FIX: Curling port 5100 to check CANARY sessions
             COUNT=$(gcloud compute ssh joshualuna@private-backend-vm \
               --project=beta-prime-489121 \
               --zone=us-central1-a \
               --tunnel-through-iap \
-              --command="curl -s http://localhost:5000/internal/sessions/count | grep -o '\"active_sessions\":\s*[0-9]*' | grep -o '[0-9]*'" || echo "0")
+              --command="curl -s http://localhost:5100/internal/sessions/count | grep -o '\"active_sessions\":\s*[0-9]*' | grep -o '[0-9]*'" || echo "0")
             
             echo "Current canary active sessions: ${COUNT:-0}"
             
@@ -57,31 +50,44 @@ jobs:
             sleep 60
           done
 
+      # NEW CRITICAL STEP: Update the Stable Containers before shifting traffic back!
+      - name: Update Stable Docker Containers
+        run: |
+          gcloud compute ssh joshualuna@private-backend-vm \
+            --project=beta-prime-489121 \
+            --zone=us-central1-a \
+            --tunnel-through-iap \
+            --command="
+              cd /home/joshualuna/arroyo_seco_stage2
+              
+              # Pull the latest stable images (assuming your merge to main tags them as stable)
+              sudo docker compose pull api-gateway-stable auth-service-stable catalog-service-stable order-service-stable reservation-service-stable payment-service-stable announcements-service-stable
+              
+              # Restart the stable stack
+              sudo docker compose up -d --no-deps api-gateway-stable auth-service-stable catalog-service-stable order-service-stable reservation-service-stable payment-service-stable announcements-service-stable
+            "
+
       - name: Authenticate GCP (Load Balancer API)
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
-      - name: Setup GCloud (LB)
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Promote and reset weights
+      - name: Promote (Reset weights to 0% Canary)
         run: |
+          # Now that Stable is updated, it is safe to route 100% of traffic back to it
           gcloud compute backend-services update arroyo-backend-svc \
-            --project=beta-prime-489121 \
-            --global \
+            --project=beta-prime-489121 --global \
             --no-custom-request-headers \
             --custom-response-header="Set-Cookie: X-Frontend-Version=stable; Path=/; Max-Age=3600" \
             --canary-weight=0
 
           gcloud compute backend-services update arroyo-frontend-svc \
-            --project=beta-prime-489121 \
-            --global \
+            --project=beta-prime-489121 --global \
             --no-custom-request-headers \
             --custom-response-header="Set-Cookie: X-Frontend-Version=stable; Path=/; Max-Age=3600" \
             --canary-weight=0
 
-      - name: Copy Sync State
+      - name: Reset Ops Manifest
         run: |
           cd ops
           mkdir -p manifests
