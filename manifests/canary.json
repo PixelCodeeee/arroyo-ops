@@ -6,8 +6,8 @@
     "status": "missing"
   },
   "backend": {
-    "commit": null,
-    "built_at": null,
-    "status": "missing"
+    "commit": "a85d2dea835657b2620719979d8d145fdf9c0c36",
+    "built_at": "2026-04-13T20:48:34Z",
+    "status": "ready"
   }
 }
