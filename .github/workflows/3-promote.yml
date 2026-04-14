@@ -76,12 +76,16 @@ jobs:
 
       - name: Promote (Reset weights to 100% Stable)
         run: |
-          gcloud compute url-maps export arroyo-url-map \
+          # 1. Use describe with format json to get a clean, parseable file
+          gcloud compute url-maps describe arroyo-url-map \
             --project=beta-prime-489121 \
             --global \
-            --format=json > /tmp/url-map.json
+            --format="json" > /tmp/raw-map.json
 
-          # Resetting both FE and BE back to simple 'service' targets (0% canary)
+          # 2. Strip GCP-managed fields that cause 'Invalid numeric literal' or 'ReadOnly' errors
+          jq 'del(.fingerprint, .creationTimestamp, .id, .selfLink, .kind)' /tmp/raw-map.json > /tmp/url-map.json
+
+          # 3. Reset both FE and BE back to simple 'service' targets (0% canary)
           jq '
             .pathMatchers[0].pathRules[0] = {
               "paths": ["/api/*"],
@@ -91,10 +95,12 @@ jobs:
             .pathMatchers[0].defaultService = "global/backendServices/arroyo-frontend-svc-stable"
           ' /tmp/url-map.json > /tmp/url-map-reset.json
 
+          # 4. Final Import as JSON
           gcloud compute url-maps import arroyo-url-map \
             --project=beta-prime-489121 \
             --global \
             --source=/tmp/url-map-reset.json \
+            --format=json \
             --quiet
 
       - name: Reset Ops Manifest
