@@ -1,5 +1,5 @@
-import fs from 'fs';
-import path from 'path';
+const fs = require('fs');
+const path = require('path');
 
 const manifestsDir = path.join(__dirname, '..', 'manifests');
 const stablePath = path.join(manifestsDir, 'stable.json');
