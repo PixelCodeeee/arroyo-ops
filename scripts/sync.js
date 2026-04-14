@@ -1,5 +1,5 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 
 const manifestsDir = path.join(__dirname, '..', 'manifests');
 const stablePath = path.join(manifestsDir, 'stable.json');
@@ -41,14 +41,14 @@ function sync() {
     const canary = loadManifest(canaryPath);
 
     const otherComponent = component === 'frontend' ? 'backend' : 'frontend';
-    
+
     console.log(`\n=== Canary Sync Triggered ===`);
     console.log(`Updating ${component} (Commit: ${commit})`);
 
     // Determine current effective API contract.
     // If a new one is provided via argument, we assume this deployment introduces it.
     let currentContract = newApiContract || canary.api_contract || stable.api_contract;
-    
+
     if (newApiContract && newApiContract !== canary.api_contract) {
         console.log(`⚠️ New API Contract introduced: ${newApiContract}`);
         // Reset the OTHER component because it doesn't support the new contract yet.
@@ -73,7 +73,7 @@ function sync() {
         built_at,
         status: 'ready'
     };
-    
+
     // Safety Contract Validation Check:
     if (canary.frontend.status === 'missing' || canary.backend.status === 'missing') {
         console.error(`\n🚨 DEPLOYMENT BLOCKED 🚨`);
@@ -85,7 +85,7 @@ function sync() {
     }
 
     saveManifest(canaryPath, canary);
-    
+
     console.log(`\n✅ Canary is theoretically synced and ready for traffic shifting.`);
     console.log(`Contract: ${canary.api_contract}`);
     console.log(`Frontend: ${canary.frontend.commit} (${canary.frontend.status})`);
