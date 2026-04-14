@@ -42,14 +42,17 @@ jobs:
           FE_READY=$(jq -r '.frontend.status' ops/manifests/canary.json)
           BE_READY=$(jq -r '.backend.status' ops/manifests/canary.json)
 
-          # 1. Export current state. 
-          # We use --format=json and immediately pass it to jq to clean it.
-          gcloud compute url-maps export arroyo-url-map \
+          # 1. Export to a physical file first to isolate the gcloud output
+          gcloud compute url-maps describe arroyo-url-map \
             --project=beta-prime-489121 \
             --global \
-            --format=json | jq 'del(.fingerprint, .creationTimestamp, .id, .selfLink)' > /tmp/url-map.json
+            --format="json" > /tmp/raw-map.json
 
-          # 2. Patch Backend
+          # 2. Clean the JSON and strip GCP-managed readonly fields
+          # This prevents jq from tripping over fingerprints or IDs
+          jq 'del(.fingerprint, .creationTimestamp, .id, .selfLink, .kind)' /tmp/raw-map.json > /tmp/url-map.json
+
+          # 3. Patch Backend
           if [ "$BE_READY" == "ready" ]; then
             echo "🚀 Patching Backend: 10% Canary / 90% Stable"
             jq '
@@ -67,7 +70,7 @@ jobs:
             ' /tmp/url-map.json > /tmp/url-map-temp.json && mv /tmp/url-map-temp.json /tmp/url-map.json
           fi
 
-          # 3. Patch Frontend
+          # 4. Patch Frontend
           if [ "$FE_READY" == "ready" ]; then
             echo "🚀 Patching Frontend: 10% Canary / 90% Stable"
             jq '
@@ -83,17 +86,15 @@ jobs:
             ' /tmp/url-map.json > /tmp/url-map-temp.json && mv /tmp/url-map-temp.json /tmp/url-map.json
           fi
 
-          # 4. Final Import
+          # 5. Final Import
           if [ "$BE_READY" == "ready" ] || [ "$FE_READY" == "ready" ]; then
-            # We import the file as JSON explicitly
             gcloud compute url-maps import arroyo-url-map \
               --project=beta-prime-489121 \
               --global \
               --source=/tmp/url-map.json \
-              --format=json \
               --quiet
           else
-            echo "⚠️ Neither service is marked as ready. Check ops/manifests/canary.json."
+            echo "⚠️ Nothing ready to shift."
             exit 1
           fi
       - name: Wait for Metrics
