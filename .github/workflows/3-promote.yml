@@ -51,29 +51,103 @@ jobs:
             sleep 60
           done
 
-      - name: Update Stable Docker Containers
+      - name: Promote Backend to Stable (Conditional)
         run: |
-          gcloud compute ssh joshualuna@private-backend-vm \
-            --project=beta-prime-489121 \
-            --zone=us-central1-a \
-            --tunnel-through-iap << 'EOF'
-              cd /home/joshualuna/arroyo_seco_stage2
-              
-              # Pull latest images tagged as stable
-              sudo docker compose pull api-gateway-stable auth-service-stable catalog-service-stable order-service-stable reservation-service-stable payment-service-stable announcements-service-stable
-              
-              # Rolling update stable stack
-              sudo docker compose up -d --no-deps api-gateway-stable auth-service-stable catalog-service-stable order-service-stable reservation-service-stable payment-service-stable announcements-service-stable
-              
-              # Cleanup orphaned images to save disk space
-              sudo docker image prune -f
-          EOF
+          BE_READY=$(jq -r '.backend.status' ops/manifests/canary.json)
+          
+          if [ "$BE_READY" == "ready" ]; then
+            echo "🚀 Backend Canary detectado. Promoviendo a Stable..."
+            gcloud compute ssh joshualuna@private-backend-vm \
+              --project=beta-prime-489121 \
+              --zone=us-central1-a \
+              --tunnel-through-iap << 'EOF'
+                cd /home/joshualuna/arroyo_seco_stage2
+                
+                echo "Descargando y re-etiquetando imágenes..."
+                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/api-gateway:canary
+                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/auth-service:canary
+                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/catalog-service:canary
+                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/order-service:canary
+                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/reservation-service:canary
+                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/payment-service:canary
+                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/announcements-service:canary
 
+                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/api-gateway:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/api-gateway:stable
+                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/auth-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/auth-service:stable
+                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/catalog-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/catalog-service:stable
+                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/order-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/order-service:stable
+                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/reservation-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/reservation-service:stable
+                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/payment-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/payment-service:stable
+                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/announcements-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/announcements-service:stable
+                
+                echo "Reiniciando contenedores..."
+                sudo docker compose up -d --no-deps api-gateway-stable auth-service-stable catalog-service-stable order-service-stable reservation-service-stable payment-service-stable announcements-service-stable
+                sudo docker image prune -f
+            EOF
+          else
+            echo "⏭️ No hay actualización de Backend. Saltando."
+          fi
+
+      - name: Promote Frontend to Stable (Conditional)
+        run: |
+          FE_READY=$(jq -r '.frontend.status' ops/manifests/canary.json)
+          
+          if [ "$FE_READY" == "ready" ]; then
+            echo "🚀 Frontend Canary detectado. Promoviendo a Stable..."
+            gcloud compute ssh joshualuna@nginx-public-vm \
+              --project=beta-prime-489121 \
+              --zone=us-central1-a \
+              --tunnel-through-iap << 'EOF'
+                echo "Descargando y re-etiquetando Frontend..."
+                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_pwa_stage2/frontend:canary
+                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_pwa_stage2/frontend:canary ghcr.io/pixelcodeeee/arroyo_seco_pwa_stage2/frontend:stable
+                
+                echo "Reiniciando contenedor Frontend..."
+                # Ajusta este comando si usas docker-compose en la VM del frontend
+                sudo docker stop frontend-stable-manual || true
+                sudo docker rm frontend-stable-manual || true
+                sudo docker run -d --name frontend-stable-manual --restart always -p 3000:3000 ghcr.io/pixelcodeeee/arroyo_seco_pwa_stage2/frontend:stable
+                
+                sudo docker image prune -f
+            EOF
+          else
+            echo "⏭️ No hay actualización de Frontend. Saltando."
+          fi
+
+     # --- EL HEALTH CHECK CONDICIONAL (Sigue usando IAP Credentials del paso anterior) ---
+      - name: Verify Stable Stack is Healthy
+        run: |  
+          FE_READY=$(jq -r '.frontend.status' ops/manifests/canary.json)
+          BE_READY=$(jq -r '.backend.status' ops/manifests/canary.json)
+          
+          # Esperar un momento a que Docker levante los procesos
+          sleep 10
+
+          if [ "$BE_READY" == "ready" ]; then
+            echo "Verificando que la pila Backend Stable esté lista..."
+            gcloud compute ssh joshualuna@private-backend-vm \
+              --project=beta-prime-489121 \
+              --zone=us-central1-a \
+              --tunnel-through-iap \
+              --command="curl -f http://localhost:5000/health || (echo '❌ Backend Stable stack is NOT healthy' && exit 1)"
+          fi
+
+          if [ "$FE_READY" == "ready" ]; then
+            echo "Verificando que la pila Frontend Stable esté lista..."
+            gcloud compute ssh joshualuna@nginx-public-vm \
+              --project=beta-prime-489121 \
+              --zone=us-central1-a \
+              --tunnel-through-iap \
+              --command="curl -f http://localhost:3000 || (echo '❌ Frontend Stable stack is NOT healthy' && exit 1)"
+          fi
+
+      # --- CAMBIO DE CREDENCIALES PARA EL LOAD BALANCER ---
       - name: Authenticate GCP (Load Balancer API)
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
+      # --- RESET DE TRÁFICO (Este se queda igual) ---
       - name: Promote (Reset weights to 100% Stable)
         run: |
           # 1. Use describe with format json to get a clean, parseable file
@@ -82,10 +156,11 @@ jobs:
             --global \
             --format="json" > /tmp/raw-map.json
 
-          # 2. Strip GCP-managed fields that cause 'Invalid numeric literal' or 'ReadOnly' errors
+          # 2. Strip GCP-managed fields
           jq 'del(.fingerprint, .creationTimestamp, .id, .selfLink, .kind)' /tmp/raw-map.json > /tmp/url-map.json
 
           # 3. Reset both FE and BE back to simple 'service' targets (0% canary)
+          # Es seguro ejecutar esto siempre, ya que simplemente devuelve todo a su estado base
           jq '
             .pathMatchers[0].pathRules[0] = {
               "paths": ["/api/*"],
@@ -103,6 +178,7 @@ jobs:
             --format=json \
             --quiet
 
+      # --- MANIFEST RESET (Este se queda igual) ---
       - name: Reset Ops Manifest
         run: |
           cd ops
