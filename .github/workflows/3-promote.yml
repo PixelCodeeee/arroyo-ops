@@ -61,29 +61,29 @@ jobs:
               --project=beta-prime-489121 \
               --zone=us-central1-a \
               --tunnel-through-iap << 'EOF'
-                cd /home/joshualuna/arroyo_seco_stage2
-                
-                echo "Descargando y re-etiquetando imágenes..."
-                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/api-gateway:canary
-                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/auth-service:canary
-                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/catalog-service:canary
-                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/order-service:canary
-                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/reservation-service:canary
-                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/payment-service:canary
-                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/announcements-service:canary
+          cd /home/joshualuna/arroyo_seco_stage2
+          
+          echo "Descargando y re-etiquetando imágenes..."
+          sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/api-gateway:canary
+          sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/auth-service:canary
+          sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/catalog-service:canary
+          sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/order-service:canary
+          sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/reservation-service:canary
+          sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/payment-service:canary
+          sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_stage2/announcements-service:canary
 
-                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/api-gateway:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/api-gateway:stable
-                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/auth-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/auth-service:stable
-                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/catalog-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/catalog-service:stable
-                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/order-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/order-service:stable
-                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/reservation-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/reservation-service:stable
-                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/payment-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/payment-service:stable
-                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/announcements-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/announcements-service:stable
-                
-                echo "Reiniciando contenedores..."
-                sudo docker compose up -d --no-deps api-gateway-stable auth-service-stable catalog-service-stable order-service-stable reservation-service-stable payment-service-stable announcements-service-stable
-                sudo docker image prune -f
-            EOF
+          sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/api-gateway:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/api-gateway:stable
+          sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/auth-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/auth-service:stable
+          sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/catalog-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/catalog-service:stable
+          sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/order-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/order-service:stable
+          sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/reservation-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/reservation-service:stable
+          sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/payment-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/payment-service:stable
+          sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_stage2/announcements-service:canary ghcr.io/pixelcodeeee/arroyo_seco_stage2/announcements-service:stable
+          
+          echo "Reiniciando contenedores..."
+          sudo docker compose up -d --no-deps api-gateway-stable auth-service-stable catalog-service-stable order-service-stable reservation-service-stable payment-service-stable announcements-service-stable
+          sudo docker image prune -f
+          EOF
           else
             echo "⏭️ No hay actualización de Backend. Saltando."
           fi
@@ -98,22 +98,20 @@ jobs:
               --project=beta-prime-489121 \
               --zone=us-central1-a \
               --tunnel-through-iap << 'EOF'
-                echo "Descargando y re-etiquetando Frontend..."
-                sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_pwa_stage2/frontend:canary
-                sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_pwa_stage2/frontend:canary ghcr.io/pixelcodeeee/arroyo_seco_pwa_stage2/frontend:stable
-                
-                echo "Reiniciando contenedor Frontend..."
-                # Ajusta este comando si usas docker-compose en la VM del frontend
-                sudo docker stop frontend-stable-manual || true
-                sudo docker rm frontend-stable-manual || true
-                sudo docker run -d --name frontend-stable-manual --restart always -p 3000:3000 ghcr.io/pixelcodeeee/arroyo_seco_pwa_stage2/frontend:stable
-                
-                sudo docker image prune -f
-            EOF
+          echo "Descargando y re-etiquetando Frontend..."
+          sudo docker pull ghcr.io/pixelcodeeee/arroyo_seco_pwa_stage2/frontend:canary
+          sudo docker tag ghcr.io/pixelcodeeee/arroyo_seco_pwa_stage2/frontend:canary ghcr.io/pixelcodeeee/arroyo_seco_pwa_stage2/frontend:stable
+          
+          echo "Reiniciando contenedor Frontend..."
+          sudo docker stop frontend-stable-manual || true
+          sudo docker rm frontend-stable-manual || true
+          sudo docker run -d --name frontend-stable-manual --restart always -p 3000:3000 ghcr.io/pixelcodeeee/arroyo_seco_pwa_stage2/frontend:stable
+          
+          sudo docker image prune -f
+          EOF
           else
             echo "⏭️ No hay actualización de Frontend. Saltando."
           fi
-
      # --- EL HEALTH CHECK CONDICIONAL (Sigue usando IAP Credentials del paso anterior) ---
       - name: Verify Stable Stack is Healthy
         run: |  
