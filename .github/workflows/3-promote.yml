@@ -18,7 +18,7 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_IAP_CREDENTIALS }}
 
-      - name: Setup GCloud (IAP)
+      - name: Setup GCloud
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Set Redis Announcement (via SSH)
@@ -26,87 +26,96 @@ jobs:
           gcloud compute ssh joshualuna@private-backend-vm \
             --project=beta-prime-489121 \
             --zone=us-central1-a \
-            --tunnel-through-iap \
-            --command="sudo docker exec microservices-redis-shared-1 redis-cli set maintenance:announcement:canary 'La sesión terminará pronto debido a la promoción de características' EX 900" || true
+            --tunnel-through-iap << 'EOF'
+              sudo docker exec microservices-redis-shared-1 redis-cli set maintenance:announcement:canary 'La sesión terminará pronto debido a la promoción de características' EX 900
+          EOF
+        continue-on-error: true
 
       - name: Wait & Drain Canary Sessions
         run: |
-          echo "Starting Drain sequence on Canary port 5100..."
-          while : ; do
-            # FIX: Curling port 5100 to check CANARY sessions
+          echo "Monitoring Canary drain on port 5100..."
+          # Set a timeout (e.g., 10 loops = 10 mins) so CI doesn't run forever
+          for i in {1..10}; do
             COUNT=$(gcloud compute ssh joshualuna@private-backend-vm \
               --project=beta-prime-489121 \
               --zone=us-central1-a \
               --tunnel-through-iap \
-              --command="curl -s http://localhost:5100/internal/sessions/count | grep -o '\"active_sessions\":\s*[0-9]*' | grep -o '[0-9]*'" || echo "0")
+              --command="curl -s http://localhost:5100/internal/sessions/count" | jq -r '.active_sessions // 0' || echo "0")
             
-            echo "Current canary active sessions: ${COUNT:-0}"
+            echo "Attempt $i: Current canary active sessions: $COUNT"
             
-            if [ -z "$COUNT" ] || [ "$COUNT" -eq 0 ]; then
-                echo "Drain complete!"
+            if [ "$COUNT" -eq 0 ]; then
+                echo "✅ Drain complete!"
                 break
             fi
-            echo "Waiting for traffic to drain..."
             sleep 60
           done
 
-      # NEW CRITICAL STEP: Update the Stable Containers before shifting traffic back!
       - name: Update Stable Docker Containers
         run: |
           gcloud compute ssh joshualuna@private-backend-vm \
             --project=beta-prime-489121 \
             --zone=us-central1-a \
-            --tunnel-through-iap \
-            --command="
+            --tunnel-through-iap << 'EOF'
               cd /home/joshualuna/arroyo_seco_stage2
               
-              # Pull the latest stable images (assuming your merge to main tags them as stable)
+              # Pull latest images tagged as stable
               sudo docker compose pull api-gateway-stable auth-service-stable catalog-service-stable order-service-stable reservation-service-stable payment-service-stable announcements-service-stable
               
-              # Restart the stable stack
+              # Rolling update stable stack
               sudo docker compose up -d --no-deps api-gateway-stable auth-service-stable catalog-service-stable order-service-stable reservation-service-stable payment-service-stable announcements-service-stable
-            "
+              
+              # Cleanup orphaned images to save disk space
+              sudo docker image prune -f
+          EOF
 
       - name: Authenticate GCP (Load Balancer API)
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
-      - name: Promote (Reset weights to 0% Canary)
+      - name: Promote (Reset weights to 100% Stable)
         run: |
-          # Now that Stable is updated, it is safe to route 100% of traffic back to it
-          gcloud compute backend-services update arroyo-backend-svc \
-            --project=beta-prime-489121 --global \
-            --no-custom-request-headers \
-            --custom-response-header="Set-Cookie: X-Frontend-Version=stable; Path=/; Max-Age=3600" \
-            --canary-weight=0
+          gcloud compute url-maps export arroyo-url-map \
+            --project=beta-prime-489121 \
+            --global \
+            --format=json > /tmp/url-map.json
 
-          gcloud compute backend-services update arroyo-frontend-svc \
-            --project=beta-prime-489121 --global \
-            --no-custom-request-headers \
-            --custom-response-header="Set-Cookie: X-Frontend-Version=stable; Path=/; Max-Age=3600" \
-            --canary-weight=0
+          # Resetting both FE and BE back to simple 'service' targets (0% canary)
+          jq '
+            .pathMatchers[0].pathRules[0] = {
+              "paths": ["/api/*"],
+              "service": "global/backendServices/arroyo-backend-svc-stable"
+            } |
+            del(.pathMatchers[0].defaultRouteAction) |
+            .pathMatchers[0].defaultService = "global/backendServices/arroyo-frontend-svc-stable"
+          ' /tmp/url-map.json > /tmp/url-map-reset.json
+
+          gcloud compute url-maps import arroyo-url-map \
+            --project=beta-prime-489121 \
+            --global \
+            --source=/tmp/url-map-reset.json \
+            --quiet
 
       - name: Reset Ops Manifest
         run: |
           cd ops
-          mkdir -p manifests
-          touch manifests/stable.json manifests/canary.json
-          
-          if [ -s manifests/canary.json ]; then
-            cat manifests/canary.json > manifests/stable.json
+          # Merge canary status into stable before resetting canary
+          if [ -f manifests/canary.json ]; then
+            cp manifests/canary.json manifests/stable.json
           fi
 
+          # Create fresh empty canary manifest
           cat <<EOF > manifests/canary.json
           {
-            "api_contract": "$(jq -r '.api_contract // empty' manifests/stable.json || echo 'v1')",
+            "api_contract": "$(jq -r '.api_contract // "v1"' manifests/stable.json)",
             "frontend": { "commit": null, "built_at": null, "status": "missing" },
             "backend": { "commit": null, "built_at": null, "status": "missing" }
           }
           EOF
           
-          git config user.name "GitHub Actions Bot"
-          git config user.email "<>"
+          git config user.name "CI Bot"
+          git config user.email "ci@arroyoseco.online"
           git add manifests/
-          git commit -m "chore(ops): Promoted canary state to stable" || echo "No changes to commit"
-          git push origin HEAD || true
+          git commit -m "chore(ops): Promoted canary to stable and reset manifests" || echo "No changes"
+          git push origin HEAD

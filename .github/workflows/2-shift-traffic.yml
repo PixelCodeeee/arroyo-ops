@@ -13,49 +13,87 @@ jobs:
           path: ops
           token: ${{ secrets.GH_PAT }}
 
-      - name: Set Redis Announcement (via SSH)
+      - name: Authenticate (IAP for SSH)
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_IAP_CREDENTIALS }}
 
-      - name: Setup GCloud (IAP)
+      - name: Setup GCloud
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Broadcast Maintenance Message
         run: |
+          # Using heredoc to avoid any bash quote escaping issues
           gcloud compute ssh joshualuna@private-backend-vm \
             --project=beta-prime-489121 \
             --zone=us-central1-a \
-            --tunnel-through-iap \
-            --command="sudo docker exec microservices-redis-shared-1 redis-cli set maintenance:announcement:stable 'La sesión terminará pronto debido a una actualización' EX 900" || true
+            --tunnel-through-iap << 'EOF'
+              sudo docker exec microservices-redis-shared-1 redis-cli set maintenance:announcement:stable 'La sesión terminará pronto debido a una actualización' EX 900
+          EOF
+        continue-on-error: true
 
-      - name: Authenticate GCP (Load Balancer API)
+      - name: Authenticate (Load Balancer Management)
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
-      - name: Evaluate Manifest & Shift Traffic Independently
+      - name: Apply Traffic Shift
         run: |
           FE_READY=$(jq -r '.frontend.status' ops/manifests/canary.json)
           BE_READY=$(jq -r '.backend.status' ops/manifests/canary.json)
 
+          # 1. Export the current state ONCE
+          gcloud compute url-maps export arroyo-url-map \
+            --project=beta-prime-489121 \
+            --global \
+            --format=json > /tmp/url-map.json
+
+          # 2. Apply Backend Patch if ready
           if [ "$BE_READY" == "ready" ]; then
-            echo "🚀 Backend is ready. Shifting Backend traffic to 10%."
-            gcloud compute backend-services update arroyo-backend-svc \
-              --project=beta-prime-489121 --global \
-              --custom-request-headers="x-frontend-version: canary" \
-              --custom-response-header="Set-Cookie: X-Frontend-Version=canary; Path=/; Max-Age=3600" \
-              --canary-weight=10
+            echo "🚀 Patching Backend: 10% Canary / 90% Stable"
+            jq '
+              .pathMatchers[0].pathRules[0] = {
+                "paths": ["/api/*"],
+                "routeAction": {
+                  "weightedBackendServices": [
+                    { "backendService": "global/backendServices/arroyo-backend-svc-stable", "weight": 90,
+                      "headerAction": { "requestHeadersToAdd": [{ "headerName": "x-backend-version", "headerValue": "stable", "replace": true }] } },
+                    { "backendService": "global/backendServices/arroyo-backend-svc-canary", "weight": 10,
+                      "headerAction": { "requestHeadersToAdd": [{ "headerName": "x-backend-version", "headerValue": "canary", "replace": true }] } }
+                  ]
+                }
+              }
+            ' /tmp/url-map.json > /tmp/url-map-temp.json && mv /tmp/url-map-temp.json /tmp/url-map.json
           fi
 
+          # 3. Apply Frontend Patch if ready (modifies the same file)
           if [ "$FE_READY" == "ready" ]; then
-            echo "🚀 Frontend is ready. Shifting Frontend traffic to 10%."
-            gcloud compute backend-services update arroyo-frontend-svc \
-              --project=beta-prime-489121 --global \
-              --custom-request-headers="x-frontend-version: canary" \
-              --custom-response-header="Set-Cookie: X-Frontend-Version=canary; Path=/; Max-Age=3600" \
-              --canary-weight=10
+            echo "🚀 Patching Frontend: 10% Canary / 90% Stable"
+            jq '
+              del(.pathMatchers[0].defaultService) |
+              .pathMatchers[0].defaultRouteAction = {
+                "weightedBackendServices": [
+                  { "backendService": "global/backendServices/arroyo-frontend-svc-stable", "weight": 90,
+                    "headerAction": { "requestHeadersToAdd": [{ "headerName": "x-frontend-version", "headerValue": "stable", "replace": true }] } },
+                  { "backendService": "global/backendServices/arroyo-frontend-svc-canary", "weight": 10,
+                    "headerAction": { "requestHeadersToAdd": [{ "headerName": "x-frontend-version", "headerValue": "canary", "replace": true }] } }
+                ]
+              }
+            ' /tmp/url-map.json > /tmp/url-map-temp.json && mv /tmp/url-map-temp.json /tmp/url-map.json
+          fi
+
+          # 4. Final Import (Atomic update for both or whichever was ready)
+          if [ "$BE_READY" == "ready" ] || [ "$FE_READY" == "ready" ]; then
+            gcloud compute url-maps import arroyo-url-map \
+              --project=beta-prime-489121 \
+              --global \
+              --source=/tmp/url-map.json \
+              --quiet
+          else
+            echo "⚠️ Neither service is marked as ready. Nothing to shift."
           fi
 
       - name: Wait for Metrics
-        run: sleep 300
+        run: |
+          echo "Traffic shift applied. Monitoring for 5 minutes..."
+          sleep 300
