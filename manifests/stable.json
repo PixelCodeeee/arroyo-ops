@@ -3,11 +3,11 @@
   "frontend": {
     "commit": "d3bd38f8db309bfa9c955cee77c323995f252799",
     "built_at": "2026-04-15T08:07:55Z",
-    "status": "ready"
+    "status": "synced_from_stable"
   },
   "backend": {
-    "commit": "641f174e0420e4e092f6b902add0bafc85a9c705",
-    "built_at": "2026-04-15T07:01:24Z",
-    "status": "synced_from_stable"
+    "commit": "ec99ba27858323fedb933e2682d885327c7a023e",
+    "built_at": "2026-04-15T08:53:47Z",
+    "status": "ready"
   }
 }
