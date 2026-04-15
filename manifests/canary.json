@@ -1,13 +1,5 @@
 {
   "api_contract": "v1",
-  "frontend": {
-    "commit": "3158e783b508f7995384b186bac178717e383b57",
-    "built_at": "2026-04-15T18:48:59Z",
-    "status": "ready"
-  },
-  "backend": {
-    "commit": "108f058a4caa45471c9382e9a1f3c4dd0b3f67c5",
-    "built_at": "2026-04-15T18:51:58Z",
-    "status": "ready"
-  }
+  "frontend": { "commit": null, "built_at": null, "status": "missing" },
+  "backend": { "commit": null, "built_at": null, "status": "missing" }
 }
