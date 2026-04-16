@@ -40,7 +40,7 @@ jobs:
         with:
           filename: ops/scripts/canary-load-test.js
         env:
-          BASE_URL: https://api.arroyoseco.online
+          BASE_URL: https://arroyoseco.online
           K6_CLOUD_TOKEN: ${{ secrets.K6_CLOUD_TOKEN }}
 
       - name: Verify k6 Results

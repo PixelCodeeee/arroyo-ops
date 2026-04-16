@@ -4,7 +4,7 @@ set -e
 echo "Running Smoke Tests on Canary Deployment..."
 
 # You must replace this with your actual GCLB external IP or domain when configuring pipelines.
-# For example, https://api.arroyoseco.online
+# For example, https://arroyoseco.online
 if [ -z "$1" ]; then
   LB_IP=$(gcloud compute addresses describe arroyo-global-ip --format="get(address)" --global --project=beta-prime-489121 2>/dev/null || echo "127.0.0.1")
   TARGET_URL="http://$LB_IP"

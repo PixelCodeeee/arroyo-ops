@@ -13,13 +13,13 @@ import { check, sleep } from 'k6';
 //   k6 run --dry-run scripts/canary-load-test.js
 // ─────────────────────────────────────────
 
-const BASE_URL = __ENV.BASE_URL || 'https://api.arroyoseco.online';
+const BASE_URL = __ENV.BASE_URL || 'https://arroyoseco.online';
 
 export const options = {
   // Ramp from 10 → 20 users, hold, then ramp down
   stages: [
     { duration: '30s', target: 10 },   // ramp up to 10 users
-    { duration: '1m',  target: 20 },   // hold at 20 users
+    { duration: '1m', target: 20 },   // hold at 20 users
     { duration: '30s', target: 0 },    // ramp down
   ],
 
