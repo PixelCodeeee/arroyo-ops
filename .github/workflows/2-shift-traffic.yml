@@ -32,6 +32,25 @@ jobs:
           EOF
         continue-on-error: true
 
+      # ─────────────────────────────────────────
+      # k6 LOAD TEST GATE — blocks cutover if canary is unhealthy
+      # ─────────────────────────────────────────
+      - name: Run k6 Canary Load Test
+        uses: grafana/k6-action@v0.3.1
+        with:
+          filename: ops/scripts/canary-load-test.js
+        env:
+          BASE_URL: https://api.arroyoseco.online
+          K6_CLOUD_TOKEN: ${{ secrets.K6_CLOUD_TOKEN }}
+
+      - name: Verify k6 Results
+        if: failure()
+        run: |
+          echo "🚨 k6 load test FAILED (>1% errors or p95 > 2s)."
+          echo "Traffic shift ABORTED to protect production."
+          exit 1
+      # ─────────────────────────────────────────
+
       - name: Authenticate (Load Balancer Management)
         uses: google-github-actions/auth@v2
         with:
