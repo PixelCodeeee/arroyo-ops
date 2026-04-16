@@ -3,56 +3,16 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ─────────────────────────────────────────
-  # GATE: All tests must pass before promotion
-  # ─────────────────────────────────────────
-  test-gate:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Backend Repository
-        uses: actions/checkout@v4
-        with:
-          repository: PixelCodeeee/arroyo_seco_stage2
-          path: backend
-          token: ${{ secrets.GH_PAT }}
+  # ── Reusable test gate (Jest + k6) ──
+  run-tests:
+    uses: ./.github/workflows/test-gate.yml
+    secrets:
+      GH_PAT: ${{ secrets.GH_PAT }}
+      K6_CLOUD_TOKEN: ${{ secrets.K6_CLOUD_TOKEN }}
 
-      - name: Checkout Ops Repository
-        uses: actions/checkout@v4
-        with:
-          repository: PixelCodeeee/arroyo-ops
-          path: ops
-          token: ${{ secrets.GH_PAT }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      # ── Jest/Supertest Unit Tests ──
-      - name: Run API Gateway Unit Tests
-        run: |
-          cd backend/api-gateway
-          npm ci
-          npm test
-
-      # ── k6 Canary Health Check ──
-      - name: Run k6 Canary Health Check
-        uses: grafana/k6-action@v0.3.1
-        with:
-          filename: ops/scripts/canary-load-test.js
-        env:
-          BASE_URL: https://arroyoseco.online
-          K6_CLOUD_TOKEN: ${{ secrets.K6_CLOUD_TOKEN }}
-
-      - name: Gate Result
-        run: |
-          echo "✅ All tests passed — promotion is authorized."
-
-  # ─────────────────────────────────────────
-  # PROMOTE (only runs if test-gate passes)
-  # ─────────────────────────────────────────
+  # ── Promote (only if tests pass) ──
   promote:
-    needs: test-gate
+    needs: run-tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Ops Repository

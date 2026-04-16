@@ -3,7 +3,16 @@ on:
   workflow_dispatch:
 
 jobs:
+  # ── Reusable test gate (Jest + k6) ──
+  run-tests:
+    uses: ./.github/workflows/test-gate.yml
+    secrets:
+      GH_PAT: ${{ secrets.GH_PAT }}
+      K6_CLOUD_TOKEN: ${{ secrets.K6_CLOUD_TOKEN }}
+
+  # ── Shift traffic (only if tests pass) ──
   shift-traffic:
+    needs: run-tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Ops Repository
@@ -31,25 +40,6 @@ jobs:
               sudo docker exec microservices-redis-shared-1 redis-cli set maintenance:announcement:stable 'La sesión terminará pronto debido a una actualización' EX 900
           EOF
         continue-on-error: true
-
-      # ─────────────────────────────────────────
-      # k6 LOAD TEST GATE — blocks cutover if canary is unhealthy
-      # ─────────────────────────────────────────
-      - name: Run k6 Canary Load Test
-        uses: grafana/k6-action@v0.3.1
-        with:
-          filename: ops/scripts/canary-load-test.js
-        env:
-          BASE_URL: https://arroyoseco.online
-          K6_CLOUD_TOKEN: ${{ secrets.K6_CLOUD_TOKEN }}
-
-      - name: Verify k6 Results
-        if: failure()
-        run: |
-          echo "🚨 k6 load test FAILED (>1% errors or p95 > 2s)."
-          echo "Traffic shift ABORTED to protect production."
-          exit 1
-      # ─────────────────────────────────────────
 
       - name: Authenticate (Load Balancer Management)
         uses: google-github-actions/auth@v2
