@@ -1,6 +1,17 @@
 name: "2 - Shift Traffic to Canary"
 on:
   workflow_dispatch:
+    inputs:
+      canary_weight:
+        description: 'Canary traffic percentage'
+        required: true
+        default: '10'
+        type: choice
+        options:
+          - '5'
+          - '10'
+          - '25'
+          - '50'
 
 jobs:
   # ── Reusable test gate (Jest + k6) ──
@@ -32,7 +43,6 @@ jobs:
 
       - name: Broadcast Maintenance Message
         run: |
-          # Using heredoc to avoid any bash quote escaping issues
           gcloud compute ssh joshualuna@private-backend-vm \
             --project=beta-prime-489121 \
             --zone=us-central1-a \
@@ -46,32 +56,38 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
-      - name: Apply Traffic Shift
+      - name: Apply Progressive Traffic Shift
+        env:
+          CANARY_WEIGHT: ${{ github.event.inputs.canary_weight }}
         run: |
           FE_READY=$(jq -r '.frontend.status' ops/manifests/canary.json)
           BE_READY=$(jq -r '.backend.status' ops/manifests/canary.json)
 
-          # 1. Export to a physical file first to isolate the gcloud output
+          CANARY=${CANARY_WEIGHT}
+          STABLE=$((100 - CANARY))
+
+          echo "📊 Traffic split: ${STABLE}% Stable / ${CANARY}% Canary"
+
+          # 1. Export current URL map
           gcloud compute url-maps describe arroyo-url-map \
             --project=beta-prime-489121 \
             --global \
             --format="json" > /tmp/raw-map.json
 
-          # 2. Clean the JSON and strip GCP-managed readonly fields
-          # This prevents jq from tripping over fingerprints or IDs
+          # 2. Strip GCP-managed readonly fields
           jq 'del(.fingerprint, .creationTimestamp, .id, .selfLink, .kind)' /tmp/raw-map.json > /tmp/url-map.json
 
           # 3. Patch Backend
           if [ "$BE_READY" == "ready" ]; then
-            echo "🚀 Patching Backend: 10% Canary / 90% Stable"
-            jq '
+            echo "🚀 Patching Backend: ${STABLE}% Stable / ${CANARY}% Canary"
+            jq --argjson stable "$STABLE" --argjson canary "$CANARY" '
               .pathMatchers[0].pathRules[0] = {
                 "paths": ["/api/*"],
                 "routeAction": {
                   "weightedBackendServices": [
-                    { "backendService": "global/backendServices/arroyo-backend-svc-stable", "weight": 90,
+                    { "backendService": "global/backendServices/arroyo-backend-svc-stable", "weight": $stable,
                       "headerAction": { "requestHeadersToAdd": [{ "headerName": "x-backend-version", "headerValue": "stable", "replace": true }] } },
-                    { "backendService": "global/backendServices/arroyo-backend-svc-canary", "weight": 10,
+                    { "backendService": "global/backendServices/arroyo-backend-svc-canary", "weight": $canary,
                       "headerAction": { "requestHeadersToAdd": [{ "headerName": "x-backend-version", "headerValue": "canary", "replace": true }] } }
                   ]
                 }
@@ -81,14 +97,14 @@ jobs:
 
           # 4. Patch Frontend
           if [ "$FE_READY" == "ready" ]; then
-            echo "🚀 Patching Frontend: 10% Canary / 90% Stable"
-            jq '
+            echo "🚀 Patching Frontend: ${STABLE}% Stable / ${CANARY}% Canary"
+            jq --argjson stable "$STABLE" --argjson canary "$CANARY" '
               del(.pathMatchers[0].defaultService) |
               .pathMatchers[0].defaultRouteAction = {
                 "weightedBackendServices": [
-                  { "backendService": "global/backendServices/arroyo-frontend-svc-stable", "weight": 90,
+                  { "backendService": "global/backendServices/arroyo-frontend-svc-stable", "weight": $stable,
                     "headerAction": { "requestHeadersToAdd": [{ "headerName": "x-frontend-version", "headerValue": "stable", "replace": true }] } },
-                  { "backendService": "global/backendServices/arroyo-frontend-svc-canary", "weight": 10,
+                  { "backendService": "global/backendServices/arroyo-frontend-svc-canary", "weight": $canary,
                     "headerAction": { "requestHeadersToAdd": [{ "headerName": "x-frontend-version", "headerValue": "canary", "replace": true }] } }
                 ]
               }
@@ -102,11 +118,14 @@ jobs:
               --global \
               --source=/tmp/url-map.json \
               --quiet
+            echo "✅ Traffic shift applied: ${STABLE}/${CANARY}"
           else
             echo "⚠️ Nothing ready to shift."
             exit 1
           fi
+
       - name: Wait for Metrics
         run: |
           echo "Traffic shift applied. Monitoring for 5 minutes..."
+          echo "Run this workflow again with a higher percentage to increase canary traffic."
           sleep 300
